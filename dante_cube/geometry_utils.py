@@ -32,6 +32,7 @@ COLLECTION_STAIRS = "DanteCube_Stairs"
 COLLECTION_CUTTERS = "DanteCube_Cutters"
 COLLECTION_ROOM_CELLS = "DanteCube_RoomCells"
 COLLECTION_CORRIDOR = "DanteCube_Corridor"
+COLLECTION_TRANSITION = "DanteCube_Transition"
 STRUCTURE_LOWER = "lower"
 STRUCTURE_UPPER = "upper"
 FACE_FLOOR = "floor"
@@ -71,6 +72,7 @@ def build_scene(rooms: list[RoomBox], graph: AdjacencyGraph, config: AbyssConfig
         COLLECTION_STAIRS: _ensure_collection(bpy, COLLECTION_STAIRS),
         COLLECTION_CUTTERS: _ensure_collection(bpy, COLLECTION_CUTTERS),
         COLLECTION_ROOM_CELLS: _ensure_collection(bpy, COLLECTION_ROOM_CELLS),
+        COLLECTION_TRANSITION: _ensure_collection(bpy, COLLECTION_TRANSITION),
     }
 
     materials = _create_depth_materials(bpy, config)
@@ -94,7 +96,8 @@ def build_scene(rooms: list[RoomBox], graph: AdjacencyGraph, config: AbyssConfig
 
     room_apertures = _collect_room_apertures(rooms, openings, semantics, config)
     _create_exterior_cubes(bpy, collections[COLLECTION_ABYSS], rooms, config)
-    _create_transition_corner_columns(bpy, collections[COLLECTION_ABYSS], structure_groups, config)
+    _create_transition_glass_band(bpy, collections[COLLECTION_TRANSITION], structure_groups, config)
+    _create_transition_lsystem_branches(bpy, collections[COLLECTION_TRANSITION], structure_groups, config)
     rooms_obj = _create_rooms(bpy, collections[COLLECTION_ROOMS], rooms, config, materials, dante_path, semantics, room_apertures)
     _create_room_cells(bpy, collections[COLLECTION_ROOM_CELLS], rooms, config, semantics, room_apertures)
     if config.enable_opening_booleans:
@@ -187,6 +190,54 @@ def _create_transition_column_material(bpy):
     return material
 
 
+def _create_transition_glass_material(bpy):
+    material = bpy.data.materials.new("Dante_Transition_Glass")
+    color = (0.075, 0.068, 0.058, 0.1)
+    material.diffuse_color = color
+    material.blend_method = "BLEND"
+    material.use_screen_refraction = True
+    material.show_transparent_back = True
+    material.use_nodes = True
+    bsdf = material.node_tree.nodes.get("Principled BSDF")
+    if bsdf is not None:
+        bsdf.inputs["Base Color"].default_value = color
+        bsdf.inputs["Alpha"].default_value = color[3]
+        bsdf.inputs["Roughness"].default_value = 0.9
+        bsdf.inputs["Metallic"].default_value = 0.0
+    return material
+
+
+def _create_transition_branch_material(bpy):
+    material = bpy.data.materials.new("Dante_Transition_Branches")
+    color = (0.92, 0.94, 0.92, 0.68)
+    material.diffuse_color = color
+    material.blend_method = "BLEND"
+    material.show_transparent_back = True
+    material.use_nodes = True
+    bsdf = material.node_tree.nodes.get("Principled BSDF")
+    if bsdf is not None:
+        bsdf.inputs["Base Color"].default_value = color
+        bsdf.inputs["Alpha"].default_value = color[3]
+        bsdf.inputs["Roughness"].default_value = 0.72
+        bsdf.inputs["Emission Color"].default_value = (0.92, 0.94, 0.92, 1.0)
+        bsdf.inputs["Emission Strength"].default_value = 0.04
+    return material
+
+
+def _create_transition_platform_material(bpy):
+    material = bpy.data.materials.new("Dante_Transition_Platform")
+    color = (0.16, 0.15, 0.14, 0.92)
+    material.diffuse_color = color
+    material.blend_method = "BLEND"
+    material.use_nodes = True
+    bsdf = material.node_tree.nodes.get("Principled BSDF")
+    if bsdf is not None:
+        bsdf.inputs["Base Color"].default_value = color
+        bsdf.inputs["Alpha"].default_value = color[3]
+        bsdf.inputs["Roughness"].default_value = 0.82
+    return material
+
+
 def _create_exterior_cubes(bpy, collection, rooms: list[RoomBox], config: AbyssConfig) -> None:
     material = bpy.data.materials.new("Dante_Exterior_Skin")
     material.diffuse_color = (0.075, 0.068, 0.058, 0.1)
@@ -263,6 +314,297 @@ def _create_transition_corner_columns(bpy, collection, structure_groups: dict[st
             obj.dimensions = (width, width, z_max - z_min)
             obj.data.materials.append(material)
             _link_to_collection(bpy, obj, collection)
+
+
+def _create_transition_glass_band(bpy, collection, structure_groups: dict[str, list[RoomBox]], config: AbyssConfig) -> None:
+    """在上下立方体之间生成 6m 高的玻璃转换层与四角细柱。"""
+
+    lower_rooms = structure_groups.get(STRUCTURE_LOWER, [])
+    upper_rooms = structure_groups.get(STRUCTURE_UPPER, [])
+    if not lower_rooms or not upper_rooms:
+        return
+
+    _, _, _, _, _, lower_max_z = structure_bounds_from_room(lower_rooms[0])
+    upper_min_x, upper_min_y, upper_min_z, upper_max_x, upper_max_y, _ = structure_bounds_from_room(upper_rooms[0])
+    if upper_min_z <= lower_max_z:
+        return
+
+    glass_thickness = max(0.04, config.skin_thickness * 0.6)
+    column_width = max(0.24, config.module_size * 0.10)
+    z_min = lower_max_z
+    z_max = upper_min_z
+    z_mid = (z_min + z_max) * 0.5
+
+    vertices: list[tuple[float, float, float]] = []
+    faces: list[tuple[int, int, int, int]] = []
+    _append_box_bounds_geometry(
+        vertices,
+        faces,
+        (upper_min_x, upper_min_y - glass_thickness, z_min, upper_max_x, upper_min_y, z_max),
+    )
+    _append_box_bounds_geometry(
+        vertices,
+        faces,
+        (upper_min_x, upper_max_y, z_min, upper_max_x, upper_max_y + glass_thickness, z_max),
+    )
+    _append_box_bounds_geometry(
+        vertices,
+        faces,
+        (upper_min_x - glass_thickness, upper_min_y, z_min, upper_min_x, upper_max_y, z_max),
+    )
+    _append_box_bounds_geometry(
+        vertices,
+        faces,
+        (upper_max_x, upper_min_y, z_min, upper_max_x + glass_thickness, upper_max_y, z_max),
+    )
+
+    mesh = bpy.data.meshes.new("DanteCube_Transition_Glass_Mesh")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    mesh.materials.append(_create_transition_glass_material(bpy))
+    glass = bpy.data.objects.new("DanteCube_Transition_Glass", mesh)
+    glass["height"] = z_max - z_min
+    glass["width"] = upper_max_x - upper_min_x
+    glass["depth"] = upper_max_y - upper_min_y
+    collection.objects.link(glass)
+
+    column_material = _create_transition_column_material(bpy)
+    xs = (upper_min_x + column_width * 0.5, upper_max_x - column_width * 0.5)
+    ys = (upper_min_y + column_width * 0.5, upper_max_y - column_width * 0.5)
+    for ix, x in enumerate(xs):
+        for iy, y in enumerate(ys):
+            bpy.ops.mesh.primitive_cube_add(size=1, location=(x, y, z_mid))
+            obj = bpy.context.object
+            obj.name = f"DanteTransitionColumn_{ix}_{iy}"
+            obj.dimensions = (column_width, column_width, z_max - z_min)
+            obj.data.materials.append(column_material)
+            _link_to_collection(bpy, obj, collection)
+
+
+def _create_transition_lsystem_branches(bpy, collection, structure_groups: dict[str, list[RoomBox]], config: AbyssConfig) -> None:
+    """从地狱立方体顶部递归种子生长 L-system 树枝，高度限制在转换层内。"""
+
+    lower_rooms = structure_groups.get(STRUCTURE_LOWER, [])
+    upper_rooms = structure_groups.get(STRUCTURE_UPPER, [])
+    if not lower_rooms or not upper_rooms:
+        return
+
+    lower_min_x, lower_min_y, _, lower_max_x, lower_max_y, lower_max_z = structure_bounds_from_room(lower_rooms[0])
+    upper_min_z = structure_bounds_from_room(upper_rooms[0])[2]
+    transition_height = upper_min_z - lower_max_z
+    if transition_height <= 0:
+        return
+
+    max_height = min(config.transition_tree_max_height, transition_height - 0.02)
+    if max_height <= 0.2:
+        return
+
+    seed_bounds = (
+        lower_min_x + config.module_size * 0.6,
+        lower_min_y + config.module_size * 0.6,
+        lower_max_x - config.module_size * 0.6,
+        lower_max_y - config.module_size * 0.6,
+    )
+    seeds = _dense_branch_seed_points(seed_bounds, config.transition_tree_seed_count, config.seed)
+    curve = bpy.data.curves.new("DanteCube_Transition_LSystem_Branches", type="CURVE")
+    curve.dimensions = "3D"
+    curve.resolution_u = 2
+    curve.bevel_depth = max(0.014, config.module_size * 0.008)
+    curve.bevel_resolution = 3
+
+    for index, (seed_x, seed_y) in enumerate(seeds):
+        _append_cypress_lsystem_tree(
+            curve,
+            (seed_x, seed_y, lower_max_z + 0.04),
+            index,
+            lower_max_z,
+            lower_max_z + max_height,
+            config,
+        )
+
+    material = _create_transition_branch_material(bpy)
+    curve.materials.append(material)
+    obj = bpy.data.objects.new("DanteCube_Transition_LSystem_Branches", curve)
+    obj["seed_count"] = len(seeds)
+    obj["max_height"] = max_height
+    collection.objects.link(obj)
+
+
+def _dense_branch_seed_points(
+    bounds: tuple[float, float, float, float],
+    target_count: int,
+    seed: int,
+) -> list[tuple[float, float]]:
+    min_x, min_y, max_x, max_y = bounds
+    columns = max(1, math.ceil(math.sqrt(target_count * (max_x - min_x) / max(1e-6, max_y - min_y))))
+    rows = max(1, math.ceil(target_count / columns))
+    step_x = (max_x - min_x) / columns
+    step_y = (max_y - min_y) / rows
+    points: list[tuple[float, float]] = []
+    for row in range(rows):
+        for col in range(columns):
+            if len(points) >= target_count:
+                break
+            index = row * columns + col
+            x = min_x + (col + 0.5) * step_x
+            y = min_y + (row + 0.5) * step_y
+            jitter_x = math.sin(seed * 0.37 + index * 1.91) * step_x * 0.30
+            jitter_y = math.cos(seed * 0.29 + index * 1.47) * step_y * 0.30
+            points.append((x + jitter_x, y + jitter_y))
+    return points
+
+
+def _append_cypress_lsystem_tree(
+    curve,
+    start: tuple[float, float, float],
+    seed_index: int,
+    min_z: float,
+    max_z: float,
+    config: AbyssConfig,
+) -> None:
+    tree_height = max(0.2, max_z - min_z)
+    trunk_segments = max(6, config.transition_tree_iterations * 3 + 3)
+    x, y, z = start
+    top = (x, y, max_z)
+
+    previous = start
+    for segment in range(1, trunk_segments + 1):
+        t = segment / trunk_segments
+        sway = math.sin(seed_index * 1.41 + t * math.pi) * 0.045 * (1.0 - t)
+        point = (x + sway, y - sway * 0.45, min_z + tree_height * t)
+        _append_curve_segment(curve, previous, point)
+        previous = point
+    _append_curve_segment(curve, previous, top)
+
+    whorl_count = max(7, config.transition_tree_iterations * 3 + 2)
+    for whorl in range(whorl_count):
+        t = (whorl + 0.9) / (whorl_count + 1.4)
+        base_z = min_z + tree_height * t
+        trunk_x = x + math.sin(seed_index * 1.41 + t * math.pi) * 0.045 * (1.0 - t)
+        trunk_y = y - math.sin(seed_index * 1.41 + t * math.pi) * 0.02 * (1.0 - t)
+        crown_scale = (1.0 - t) ** 1.35
+        branch_count = 4 if whorl % 2 else 5
+        branch_length = config.transition_tree_step_length * (2.10 * crown_scale + 0.26)
+        rise = config.transition_tree_step_length * (0.12 + 0.36 * t)
+        for branch in range(branch_count):
+            yaw = seed_index * 0.53 + whorl * 0.74 + branch * (math.tau / branch_count)
+            radial = branch_length * (0.82 + 0.16 * math.sin(seed_index + whorl + branch))
+            end = (
+                trunk_x + math.cos(yaw) * radial,
+                trunk_y + math.sin(yaw) * radial,
+                _clamp(base_z + rise, min_z, max_z - 0.06),
+            )
+            start_point = (trunk_x, trunk_y, base_z)
+            mid = (
+                trunk_x + math.cos(yaw) * radial * 0.58,
+                trunk_y + math.sin(yaw) * radial * 0.58,
+                _clamp(base_z + rise * 0.64, min_z, max_z - 0.04),
+            )
+            _append_curve_segment(curve, start_point, mid)
+            _append_curve_segment(curve, mid, end)
+            twig_count = 2 if t < 0.82 else 1
+            for twig in range(twig_count):
+                twig_yaw = yaw + (-1 if twig % 2 == 0 else 1) * math.radians(26.0 + whorl % 3 * 5.0)
+                twig_base = mid if twig == 0 else end
+                twig_length = radial * (0.28 + 0.08 * (1.0 - t))
+                twig_rise = rise * (0.22 + 0.16 * twig)
+                twig_end = (
+                    twig_base[0] + math.cos(twig_yaw) * twig_length,
+                    twig_base[1] + math.sin(twig_yaw) * twig_length,
+                    _clamp(twig_base[2] + twig_rise, min_z, max_z - 0.03),
+                )
+                _append_curve_segment(curve, twig_base, twig_end)
+    _append_curve_segment(curve, (x, y, max_z - tree_height * 0.12), top)
+
+
+def _append_curve_segment(curve, start: tuple[float, float, float], end: tuple[float, float, float]) -> None:
+    if math.dist(start, end) <= 1e-6:
+        return
+    spline = curve.splines.new("POLY")
+    spline.points.add(1)
+    spline.points[0].co = (start[0], start[1], start[2], 1.0)
+    spline.points[1].co = (end[0], end[1], end[2], 1.0)
+
+
+def _create_recursive_transition_platforms(bpy, collection, structure_groups: dict[str, list[RoomBox]], config: AbyssConfig) -> None:
+    """生成上下立方体之间的递归平台和简洁竖向动线骨架。"""
+
+    lower_rooms = structure_groups.get(STRUCTURE_LOWER, [])
+    upper_rooms = structure_groups.get(STRUCTURE_UPPER, [])
+    if not lower_rooms or not upper_rooms:
+        return
+
+    lower_min_x, lower_min_y, _, lower_max_x, lower_max_y, lower_max_z = structure_bounds_from_room(lower_rooms[0])
+    upper_min_x, upper_min_y, upper_min_z, upper_max_x, upper_max_y, _ = structure_bounds_from_room(upper_rooms[0])
+    z_min = lower_max_z + config.exterior_skin_gap
+    z_max = upper_min_z - config.exterior_skin_gap
+    if z_max - z_min <= config.transition_platform_count * config.transition_platform_thickness:
+        return
+
+    span_x = min(lower_max_x - lower_min_x, upper_max_x - upper_min_x)
+    span_y = min(lower_max_y - lower_min_y, upper_max_y - upper_min_y)
+    count = config.transition_platform_count
+    vertices: list[tuple[float, float, float]] = []
+    faces: list[tuple[int, int, int, int]] = []
+    centers: list[tuple[float, float, float]] = []
+    sizes: list[tuple[float, float, float]] = []
+    angles: list[float] = []
+
+    for index in range(count):
+        t = index / max(1, count - 1)
+        eased = t * t * (3.0 - 2.0 * t)
+        scale = config.transition_platform_start_scale + (
+            config.transition_platform_end_scale - config.transition_platform_start_scale
+        ) * eased
+        width = span_x * scale
+        depth = span_y * scale * (1.0 - 0.08 * t)
+        z = z_min + (z_max - z_min) * t
+        offset_radius = config.module_size * 0.42 * (1.0 - 0.28 * t)
+        x = math.sin(index * 1.37 + config.seed * 0.03) * offset_radius
+        y = math.cos(index * 1.11 + config.seed * 0.05) * offset_radius
+        angle = math.radians(-4.0 + 8.0 * ((index % 3) / 2.0))
+        center = (x, y, z)
+
+        centers.append(center)
+        sizes.append((width, depth, config.transition_platform_thickness))
+        angles.append(angle)
+        _append_rotated_box(vertices, faces, center, width, depth, config.transition_platform_thickness, angle)
+        _append_transition_frame(
+            vertices,
+            faces,
+            center,
+            width,
+            depth,
+            config.transition_platform_frame_width * (1.0 - 0.45 * t),
+            config.transition_platform_thickness * 0.9,
+            angle,
+        )
+
+    connector_thickness = config.transition_platform_thickness * 0.7
+    for index, (start, end) in enumerate(zip(centers, centers[1:])):
+        start_size = sizes[index]
+        end_size = sizes[index + 1]
+        start_point = _platform_edge_point(start, end, start_size, angles[index])
+        end_point = _platform_edge_point(end, start, end_size, angles[index + 1])
+        _append_oriented_box_between_points(
+            vertices,
+            faces,
+            start_point,
+            end_point,
+            config.transition_connector_width,
+            connector_thickness,
+        )
+
+    mesh = bpy.data.meshes.new("DanteCube_Recursive_Transition_Mesh")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    mesh.materials.append(_create_transition_platform_material(bpy))
+
+    obj = bpy.data.objects.new("DanteCube_Recursive_Transition", mesh)
+    obj["platform_count"] = count
+    obj["transition_z_min"] = z_min
+    obj["transition_z_max"] = z_max
+    collection.objects.link(obj)
 
 
 def _create_exterior_corridor(
@@ -616,6 +958,165 @@ def _append_box_bounds_geometry(
         ]
     )
     return 6
+
+
+def _append_rotated_box(
+    vertices: list[tuple[float, float, float]],
+    faces: list[tuple[int, int, int, int]],
+    center: tuple[float, float, float],
+    size_x: float,
+    size_y: float,
+    size_z: float,
+    angle: float,
+) -> None:
+    cx, cy, cz = center
+    hx = size_x * 0.5
+    hy = size_y * 0.5
+    hz = size_z * 0.5
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    local_points = (
+        (-hx, -hy, -hz),
+        (hx, -hy, -hz),
+        (hx, hy, -hz),
+        (-hx, hy, -hz),
+        (-hx, -hy, hz),
+        (hx, -hy, hz),
+        (hx, hy, hz),
+        (-hx, hy, hz),
+    )
+    start = len(vertices)
+    for x, y, z in local_points:
+        vertices.append((cx + x * cos_a - y * sin_a, cy + x * sin_a + y * cos_a, cz + z))
+    faces.extend(
+        [
+            (start + 0, start + 1, start + 2, start + 3),
+            (start + 4, start + 7, start + 6, start + 5),
+            (start + 0, start + 4, start + 5, start + 1),
+            (start + 1, start + 5, start + 6, start + 2),
+            (start + 2, start + 6, start + 7, start + 3),
+            (start + 3, start + 7, start + 4, start + 0),
+        ]
+    )
+
+
+def _append_transition_frame(
+    vertices: list[tuple[float, float, float]],
+    faces: list[tuple[int, int, int, int]],
+    center: tuple[float, float, float],
+    width: float,
+    depth: float,
+    frame_width: float,
+    frame_height: float,
+    angle: float,
+) -> None:
+    cx, cy, cz = center
+    z = cz + frame_height * 0.65
+    long_x = max(0.1, width + frame_width * 2.0)
+    long_y = frame_width
+    short_x = frame_width
+    short_y = max(0.1, depth)
+    local_centers = (
+        (0.0, depth * 0.5 + frame_width * 0.5),
+        (0.0, -depth * 0.5 - frame_width * 0.5),
+        (width * 0.5 + frame_width * 0.5, 0.0),
+        (-width * 0.5 - frame_width * 0.5, 0.0),
+    )
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    for index, (local_x, local_y) in enumerate(local_centers):
+        x = cx + local_x * cos_a - local_y * sin_a
+        y = cy + local_x * sin_a + local_y * cos_a
+        if index < 2:
+            _append_rotated_box(vertices, faces, (x, y, z), long_x, long_y, frame_height, angle)
+        else:
+            _append_rotated_box(vertices, faces, (x, y, z), short_x, short_y, frame_height, angle)
+
+
+def _platform_edge_point(
+    center: tuple[float, float, float],
+    toward: tuple[float, float, float],
+    size: tuple[float, float, float],
+    angle: float,
+) -> tuple[float, float, float]:
+    cx, cy, cz = center
+    dx = toward[0] - cx
+    dy = toward[1] - cy
+    length = math.hypot(dx, dy)
+    if length <= 1e-6:
+        return center
+    cos_a = math.cos(-angle)
+    sin_a = math.sin(-angle)
+    local_dx = (dx * cos_a - dy * sin_a) / length
+    local_dy = (dx * sin_a + dy * cos_a) / length
+    hx = max(0.1, size[0] * 0.5 - 0.24)
+    hy = max(0.1, size[1] * 0.5 - 0.24)
+    scale = min(hx / max(abs(local_dx), 1e-6), hy / max(abs(local_dy), 1e-6))
+    local_x = local_dx * scale
+    local_y = local_dy * scale
+    cos_b = math.cos(angle)
+    sin_b = math.sin(angle)
+    return (
+        cx + local_x * cos_b - local_y * sin_b,
+        cy + local_x * sin_b + local_y * cos_b,
+        cz + size[2] * 0.5,
+    )
+
+
+def _append_oriented_box_between_points(
+    vertices: list[tuple[float, float, float]],
+    faces: list[tuple[int, int, int, int]],
+    start_point: tuple[float, float, float],
+    end_point: tuple[float, float, float],
+    width: float,
+    thickness: float,
+) -> None:
+    sx, sy, sz = start_point
+    ex, ey, ez = end_point
+    tx, ty, tz = (ex - sx, ey - sy, ez - sz)
+    length = math.sqrt(tx * tx + ty * ty + tz * tz)
+    if length <= 1e-6:
+        return
+    tangent = (tx / length, ty / length, tz / length)
+    horizontal = math.hypot(tangent[0], tangent[1])
+    if horizontal <= 1e-6:
+        side = (1.0, 0.0, 0.0)
+    else:
+        side = (-tangent[1] / horizontal, tangent[0] / horizontal, 0.0)
+    normal = (
+        side[1] * tangent[2] - side[2] * tangent[1],
+        side[2] * tangent[0] - side[0] * tangent[2],
+        side[0] * tangent[1] - side[1] * tangent[0],
+    )
+    normal_length = math.sqrt(sum(component * component for component in normal))
+    if normal_length <= 1e-6:
+        normal = (0.0, 0.0, 1.0)
+    else:
+        normal = tuple(component / normal_length for component in normal)
+
+    half_width = width * 0.5
+    half_thickness = thickness * 0.5
+    start = len(vertices)
+    for point in (start_point, end_point):
+        px, py, pz = point
+        for side_sign, normal_sign in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+            vertices.append(
+                (
+                    px + side[0] * half_width * side_sign + normal[0] * half_thickness * normal_sign,
+                    py + side[1] * half_width * side_sign + normal[1] * half_thickness * normal_sign,
+                    pz + side[2] * half_width * side_sign + normal[2] * half_thickness * normal_sign,
+                )
+            )
+    faces.extend(
+        [
+            (start + 0, start + 1, start + 2, start + 3),
+            (start + 4, start + 7, start + 6, start + 5),
+            (start + 0, start + 4, start + 5, start + 1),
+            (start + 1, start + 5, start + 6, start + 2),
+            (start + 2, start + 6, start + 7, start + 3),
+            (start + 3, start + 7, start + 4, start + 0),
+        ]
+    )
 
 
 def _create_rooms(

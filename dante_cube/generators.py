@@ -151,7 +151,17 @@ class AbyssConfig:
     upper_vertical_aperture_fade_down: float = 0.48
     upper_vertical_aperture_max_ratio: float = 0.74
     include_upper_cube: bool = True
-    stacked_cube_offset: int = 6
+    stacked_cube_offset: int = 3
+    transition_platform_count: int = 6
+    transition_platform_start_scale: float = 0.62
+    transition_platform_end_scale: float = 0.30
+    transition_platform_thickness: float = 0.16
+    transition_platform_frame_width: float = 0.12
+    transition_connector_width: float = 0.42
+    transition_tree_seed_count: int = 36
+    transition_tree_max_height: float = 5.95
+    transition_tree_iterations: int = 3
+    transition_tree_step_length: float = 0.72
 
     def __post_init__(self) -> None:
         if self.module_size <= 0:
@@ -232,6 +242,24 @@ class AbyssConfig:
             raise ValueError("stacked_cube_offset must be non-negative")
         if self.stacked_cube_offset % self.module_size != 0:
             raise ValueError("stacked_cube_offset must align to module_size")
+        if not 5 <= self.transition_platform_count <= 7:
+            raise ValueError("transition_platform_count must be in [5, 7]")
+        if not 0 < self.transition_platform_end_scale <= self.transition_platform_start_scale <= 1:
+            raise ValueError("transition platform scales must satisfy 0 < end <= start <= 1")
+        if self.transition_platform_thickness <= 0:
+            raise ValueError("transition_platform_thickness must be positive")
+        if self.transition_platform_frame_width <= 0:
+            raise ValueError("transition_platform_frame_width must be positive")
+        if self.transition_connector_width <= 0:
+            raise ValueError("transition_connector_width must be positive")
+        if self.transition_tree_seed_count < 1:
+            raise ValueError("transition_tree_seed_count must be positive")
+        if self.transition_tree_max_height <= 0:
+            raise ValueError("transition_tree_max_height must be positive")
+        if self.transition_tree_iterations < 0:
+            raise ValueError("transition_tree_iterations must be non-negative")
+        if self.transition_tree_step_length <= 0:
+            raise ValueError("transition_tree_step_length must be positive")
 
     @property
     def min_room_size(self) -> int:
